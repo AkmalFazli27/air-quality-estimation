@@ -1,0 +1,18 @@
+[project]
+name = "air-quality-prediction"
+version = "0.1.0"
+description = "Prediksi konsentrasi polutan udara (regresi multivariabel) berbasis dataset AirQualityUCI"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "xgboost",
+    "openpyxl",
+    "jupyter",
+]
+
+[tool.uv]
+package = false
