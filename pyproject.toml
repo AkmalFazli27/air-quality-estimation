@@ -12,6 +12,7 @@ dependencies = [
     "xgboost",
     "openpyxl",
     "jupyter",
+    "jupytext>=1.19.5",
 ]
 
 [tool.uv]
