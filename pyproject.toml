@@ -2,6 +2,7 @@
 name = "air-quality-estimation"
 version = "0.1.0"
 description = "Prediksi konsentrasi polutan udara (regresi multivariabel) berbasis dataset AirQualityUCI"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "numpy",

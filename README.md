@@ -248,3 +248,9 @@ This project demonstrates:
 ## Dataset Attribution
 
 The dataset is provided by the UCI Machine Learning Repository under the dataset's stated license (research purposes). See the [official dataset page](https://archive.ics.uci.edu/dataset/360/air+quality) for attribution and licensing details. Please cite De Vito et al. (2008) when using the data.
+
+## License
+
+The code and notebooks in this repository are licensed under the MIT License — see the [LICENSE](LICENSE) file for details (Copyright (c) 2026 Muhammad Akmal Fazli Riyadi).
+
+The dataset (`data/AirQualityUCI.*` and derivatives in `data/processed/`) is **not** covered by the MIT License; it follows the UCI dataset's own terms (research purposes, commercial purposes excluded).
