@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "air-quality-prediction"
+name = "air-quality-estimation"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
