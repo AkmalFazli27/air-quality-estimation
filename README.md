@@ -79,8 +79,8 @@ Per-target feature map in `main`:
 |---|---|
 | `CO(GT)` | base 14 only (sensors + meteo + calendar) |
 | `C6H6(GT)` | base 14 only |
-| `NOx(GT)` | base + drift (21) + lag 8 + roll 2 |
-| `NO2(GT)` | ensemble of `no2_base` (21 + lag + roll) and `no2_delta` (base + lag + roll + delta + deviation) |
+| `NOx(GT)` | base + drift (21) + lag 8 + roll 2 = 31 |
+| `NO2(GT)` | ensemble of `no2_base` (20 + lag 8 + roll 2 = 30) and `no2_delta` (+ delta 8 + deviation 2 = 40) |
 
 No `*(GT)` column or `DateTime` is ever used as a predictor. Imputation is forward-fill only (`ffill`); no `bfill`/`interpolate`.
 
@@ -96,6 +96,13 @@ air-quality-estimation/
 │       ├── train.csv
 │       ├── validation.csv
 │       └── test.csv
+├── models/
+│   ├── co_gt_rf.joblib
+│   ├── c6h6_gt_rf.joblib
+│   ├── nox_gt_hgb.joblib
+│   ├── no2_rf_off.joblib
+│   ├── no2_rf_on.joblib
+│   └── no2_xgb_on.joblib
 ├── notebooks/
 │   ├── data_preparation.ipynb
 │   ├── eda.ipynb
@@ -109,7 +116,7 @@ air-quality-estimation/
 
 - `data_preparation.ipynb`: parses the raw `;`-separated CSV, builds `DateTime`, engineers calendar + drift/physics features, performs the chronological `70/15/15` split, and exports `data/processed/*.csv`. Never edit the exported CSVs by hand; re-run this notebook.
 - `eda.ipynb`: multi-pollutant EDA — distributions, missingness/`-200` patterns, sensor cross-sensitivities, drift over time, correlations, and target availability.
-- `modeling.ipynb`: per-target CV tuning, validation selection, train+validation refit, single test evaluation, `NO2` recency/delta ablation and weighted ensemble, permutation importance, and predicted-vs-actual plots.
+- `modeling.ipynb`: per-target CV tuning, validation selection, train+validation refit, single test evaluation, `NO2` recency/delta ablation and weighted ensemble, permutation importance, predicted-vs-actual plots, and `joblib` export of the final pipelines to `models/`.
 
 `notebooks/*.py` files are local `jupytext` sync artifacts (untracked) — the `.ipynb` files are the source of truth.
 
@@ -126,6 +133,7 @@ air-quality-estimation/
 9. Train+validation refit with the winning config and single test evaluation per target
 10. Weighted `NO2` ensemble refit per member with its own feature variant
 11. Permutation-importance analysis and predicted-vs-actual diagnostics
+12. Export of the refit pipelines (plus the three `NO2` ensemble members) to `models/` with `joblib`
 
 Preprocessing (`median` imputation, optional `Standard`/`Robust` scaling) is fitted inside `sklearn` pipelines. Tree models skip scaling; linear models use `RobustScaler`.
 
@@ -163,6 +171,53 @@ Top permutation-importance signals (train, `n_repeats=10`, `neg RMSE` scoring):
 - `NOx`: `elapsed_hours`, `PT08.S2(NMHC)`, `PT08.S5(O3)`, `S3_S5_diff`, `PT08.S3(NOx)`
 - `NO2`: `PT08.S5(O3)`, `T_RH`, `S3_S5_diff`, `PT08.S1(CO)`, `hour_sin`
 
+## Exported Models
+
+The final cell of `modeling.ipynb` writes the refit pipelines to `models/`. Each file is a complete `sklearn` `Pipeline` (`SimpleImputer(strategy="median")` followed by the estimator), so no separate preprocessing step is required before `predict()`. The artifacts are committed to the repository so the reported test metrics can be reproduced without retraining (~64 MB total).
+
+| File | Target | Estimator | Input features |
+|---|---|---|---:|
+| `co_gt_rf.joblib` | `CO(GT)` | `RandomForest` | 14 |
+| `c6h6_gt_rf.joblib` | `C6H6(GT)` | `RandomForest` | 14 |
+| `nox_gt_hgb.joblib` | `NOx(GT)` | `HistGradientBoosting` | 31 |
+| `no2_rf_off.joblib` | `NO2(GT)` | `RandomForest` | 30 |
+| `no2_rf_on.joblib` | `NO2(GT)` | `RandomForest` | 40 |
+| `no2_xgb_on.joblib` | `NO2(GT)` | `XGBoost` | 40 |
+
+Loading a single-target model:
+
+```python
+import joblib
+
+base_columns = [
+    "PT08.S1(CO)", "PT08.S2(NMHC)", "PT08.S3(NOx)", "PT08.S4(NO2)", "PT08.S5(O3)",
+    "T", "RH", "AH", "hour_sin", "hour_cos", "month_sin", "month_cos",
+    "day_of_week", "is_weekend",
+]
+
+model = joblib.load("models/co_gt_rf.joblib")
+predictions = model.predict(features[base_columns])
+```
+
+`NO2` is a weighted average of its three members:
+
+```python
+no2_members = [
+    ("models/no2_rf_off.joblib", 0.6000, no2_base_features),
+    ("models/no2_rf_on.joblib", 0.2102, no2_delta_features),
+    ("models/no2_xgb_on.joblib", 0.1898, no2_delta_features),
+]
+
+no2_predictions = sum(
+    weight * joblib.load(path).predict(features[columns])
+    for path, weight, columns in no2_members
+)
+```
+
+The pipelines expect **already-engineered** features in training order. Causal lags, rolling means, deltas, and the drift/physics columns are not computed inside the pipeline — they must be built from the raw sensor stream exactly as in `modeling.ipynb` before calling `predict()`. Column order follows `base_columns`, `features_by_target`, `no2_base_features`, and `no2_delta_features` respectively.
+
+The artifacts were fitted with the versions pinned in `uv.lock` (Python 3.12.6, scikit-learn 1.9.0, XGBoost 3.4.1). Loading with a materially different `scikit-learn` version may warn or fail to unpickle.
+
 ## Experiment Results
 
 | Experiment | Result | Decision |
@@ -192,6 +247,7 @@ The ensemble validation `R2` is slightly below the best single, but test `R2` im
 - `NO2` remains the hardest target (`R2 0.653`) despite the most feature engineering and ensembling.
 - Missing values use forward-fill only, which can carry stale sensor values across gaps.
 - Test-row counts differ per target because missing `*(GT)` rows are masked per task.
+- The exported `models/*.joblib` artifacts are fitted on a single chronological split and are not a deployment package: they require the same upstream causal feature engineering and were not calibrated on an external site.
 - The project has not been validated for regulatory or health-decision use.
 
 ## Reproducibility and Usage
@@ -218,6 +274,8 @@ eda.ipynb
 modeling.ipynb
 ```
 
+Re-running `modeling.ipynb` also regenerates `models/*.joblib` from the final refit.
+
 Optional checks:
 
 ```bash
@@ -229,8 +287,10 @@ rtk git status --short
 Full notebook re-execution (delete the executed copy afterwards):
 
 ```bash
-uv run jupyter nbconvert --to notebook --execute "notebooks/modeling.ipynb" --output "modeling.executed.ipynb" --ExecutePreprocessor.timeout=900
+uv run jupyter nbconvert --to notebook --execute "notebooks/modeling.ipynb" --output "modeling.executed.ipynb" --ExecutePreprocessor.timeout=7200
 ```
+
+The hyperparameter search cell alone runs for roughly 45 minutes, so the per-cell timeout must be well above the default.
 
 ## Portfolio Highlights
 
@@ -242,6 +302,7 @@ This project demonstrates:
 - Cross-validation with `TimeSeriesSplit` and per-target tuning
 - Ablation studies across sensors, lags, drift, recency, and deltas
 - Weighted ensembling with per-member feature variants
+- Reproducible model artifacts exported with `joblib`
 - Model interpretability through permutation importance
 - Honest reporting of trade-offs, including a too-good-to-be-true result
 
